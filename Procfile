@@ -1,1 +1,1 @@
-worker: python shadowmail_bot.py
+web: python shadowmail_bot.py
