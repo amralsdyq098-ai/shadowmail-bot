@@ -5,6 +5,7 @@ import string
 import time
 import os
 import threading
+import json
 from flask import Flask, request
 
 TOKEN = os.environ.get("TOKEN", "8445270867:AAF6H50J64se-KW3z00sa8DYsQlPoiMJmj0")
@@ -13,12 +14,26 @@ WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
-user_data = {}
+DATA_FILE = "user_data.json"
 seen_messages = {}
 available_domains = []
 
+# ===== حفظ وتحميل البيانات =====
+def load_data():
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r") as f:
+            data = json.load(f)
+            return {int(k): v for k, v in data.items()}
+    return {}
+
+def save_data(data):
+    with open(DATA_FILE, "w") as f:
+        json.dump({str(k): v for k, v in data.items()}, f)
+
+user_data = load_data()
+
+# ===== Domains =====
 def fetch_domains():
-    """جلب الدومينات المتاحة من mail.tm"""
     global available_domains
     try:
         res = requests.get("https://api.mail.tm/domains", timeout=10)
@@ -35,46 +50,35 @@ def create_account(username):
             fetch_domains()
         if not available_domains:
             return None, None
-        
-        domain = random.choice(available_domains)
-        email = f"{username}@{domain}"
+
         password = ''.join(random.choices(string.ascii_letters + string.digits, k=12))
-        
-        res = requests.post("https://api.mail.tm/accounts",
-                          json={"address": email, "password": password}, timeout=10)
-        if res.status_code == 201:
-            res2 = requests.post("https://api.mail.tm/token",
-                               json={"address": email, "password": password}, timeout=10)
-            token = res2.json().get("token")
-            return email, token
-        
-        # جرب دومينات تانية
-        for d in available_domains:
-            if d != domain:
-                email = f"{username}@{d}"
-                res = requests.post("https://api.mail.tm/accounts",
-                                  json={"address": email, "password": password}, timeout=10)
-                if res.status_code == 201:
-                    res2 = requests.post("https://api.mail.tm/token",
-                                       json={"address": email, "password": password}, timeout=10)
-                    token = res2.json().get("token")
-                    return email, token
+
+        for domain in available_domains:
+            email = f"{username}@{domain}"
+            res = requests.post("https://api.mail.tm/accounts",
+                                json={"address": email, "password": password}, timeout=10)
+            if res.status_code == 201:
+                res2 = requests.post("https://api.mail.tm/token",
+                                     json={"address": email, "password": password}, timeout=10)
+                token = res2.json().get("token")
+                return email, token
         return None, None
     except Exception as e:
         print(f"Error: {e}")
         return None, None
 
 def generate_email():
-    username = ''.join(random.choices(string.ascii_lowercase, k=6))
+    username = ''.join(random.choices(string.ascii_lowercase, k=5))
     return create_account(username)
 
 def set_email(username):
     return create_account(username[:10].lower())
 
+# ===== Inbox =====
 def get_inbox(token):
     try:
         res = requests.get("https://api.mail.tm/messages",
-                          headers={"Authorization": f"Bearer {token}"}, timeout=10)
+                           headers={"Authorization": f"Bearer {token}"}, timeout=10)
         return res.json().get("hydra:member", [])
     except:
         return []
@@ -82,13 +86,12 @@ def get_inbox(token):
 def get_message(token, msg_id):
     try:
         res = requests.get(f"https://api.mail.tm/messages/{msg_id}",
-                          headers={"Authorization": f"Bearer {token}"}, timeout=10)
+                           headers={"Authorization": f"Bearer {token}"}, timeout=10)
         return res.json()
     except:
         return None
 
 def check_new_emails():
-    """فحص الرسايل الجديدة كل 10 ثواني"""
     while True:
         for chat_id, data in list(user_data.items()):
             try:
@@ -120,6 +123,7 @@ def check_new_emails():
                 print(f"Error checking emails for {chat_id}: {e}")
         time.sleep(10)
 
+# ===== Commands =====
 @bot.message_handler(commands=['start'])
 def start(message):
     chat_id = message.chat.id
@@ -139,7 +143,7 @@ def start(message):
 @bot.message_handler(commands=['myemail'])
 def myemail(message):
     chat_id = message.chat.id
-    if chat_id not in user_data:
+    if chat_id not in user_data or not user_data[chat_id].get("email"):
         bot.send_message(chat_id, "⚠️ No email yet!\nUse /generate first.")
         return
     email = user_data[chat_id]["email"]
@@ -152,6 +156,7 @@ def generate(message):
     email, token = generate_email()
     if email and token:
         user_data[chat_id] = {"email": email, "token": token}
+        save_data(user_data)
         seen_messages[chat_id] = set()
         text = (
             f"✅ *Your email:*\n\n"
@@ -175,6 +180,7 @@ def set_custom(message):
     email, token = set_email(username)
     if email and token:
         user_data[chat_id] = {"email": email, "token": token}
+        save_data(user_data)
         seen_messages[chat_id] = set()
         text = (
             f"✅ *Your email:*\n\n"
@@ -186,6 +192,7 @@ def set_custom(message):
     else:
         bot.send_message(chat_id, "❌ Failed. Try another name!")
 
+# ===== Webhook =====
 @app.route('/' + TOKEN, methods=['POST'])
 def webhook():
     json_str = request.get_data(as_text=True)
@@ -199,7 +206,7 @@ def index():
 
 if __name__ == "__main__":
     fetch_domains()
-    
+
     email_thread = threading.Thread(target=check_new_emails, daemon=True)
     email_thread.start()
 
