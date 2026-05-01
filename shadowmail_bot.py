@@ -18,7 +18,6 @@ DATA_FILE = "user_data.json"
 seen_messages = {}
 available_domains = []
 
-# ===== حفظ وتحميل البيانات =====
 def load_data():
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, "r") as f:
@@ -32,7 +31,6 @@ def save_data(data):
 
 user_data = load_data()
 
-# ===== Domains =====
 def fetch_domains():
     global available_domains
     try:
@@ -50,10 +48,8 @@ def create_account(username, domain=None):
             fetch_domains()
         if not available_domains:
             return None, None
-
         password = ''.join(random.choices(string.ascii_letters + string.digits, k=12))
         domains_to_try = [domain] if domain else available_domains
-
         for d in domains_to_try:
             email = f"{username}@{d}"
             res = requests.post("https://api.mail.tm/accounts",
@@ -77,14 +73,8 @@ def set_email(username, domain=None):
 
 def init_user(chat_id):
     if chat_id not in user_data:
-        user_data[chat_id] = {
-            "emails": [],
-            "phone": None,
-            "custom_domains": [],
-            "blocklist": []
-        }
+        user_data[chat_id] = {"emails": [], "phone": None, "custom_domains": [], "blocklist": []}
 
-# ===== Inbox =====
 def get_inbox(token):
     try:
         res = requests.get("https://api.mail.tm/messages",
@@ -130,27 +120,26 @@ def check_new_emails():
                                 if body:
                                     body = body[:500]
                                 text = (
-                                    f"📩 *New Email!*\n\n"
-                                    f"📬 *To:* `{email}`\n"
-                                    f"👤 *From:* {sender}\n"
-                                    f"📌 *Subject:* {msg.get('subject', 'No subject')}\n\n"
-                                    f"💬 *Message:*\n{body}"
+                                    f"📩 New Email!\n\n"
+                                    f"📬 To: {email}\n"
+                                    f"👤 From: {sender}\n"
+                                    f"📌 Subject: {msg.get('subject', 'No subject')}\n\n"
+                                    f"💬 Message:\n{body}"
                                 )
-                                bot.send_message(chat_id, text, parse_mode="Markdown")
+                                bot.send_message(chat_id, text)
             except Exception as e:
                 print(f"Error checking emails for {chat_id}: {e}")
         time.sleep(10)
 
-# ===== Commands =====
 @bot.message_handler(commands=['start'])
 def start(message):
     chat_id = message.chat.id
     text = (
-        "👤 *Welcome to ShadowMail!*\n\n"
+        "👤 Welcome to ShadowMail!\n\n"
         "🌑 Your anonymous email assistant\n\n"
-        "📋 *Commands:*\n"
+        "📋 Commands:\n"
         "📬 /generate — Get a new fake mail id\n"
-        "🪪 /id — To know your current fake mail id\n"
+        "🪪 /id — To know your current fake mail ids\n"
         "✏️ /set name — To setup a custom fake mail id\n"
         "📱 /phone — Add/update recovery phone number\n"
         "🌐 /domain — Manage custom domains\n"
@@ -158,9 +147,8 @@ def start(message):
         "⚡ Emails arrive automatically in chat!\n\n"
         "🚀 Try /generate now!"
     )
-    bot.send_message(chat_id, text, parse_mode="Markdown")
+    bot.send_message(chat_id, text)
 
-# ===== /id =====
 @bot.message_handler(commands=['id'])
 def show_ids(message):
     chat_id = message.chat.id
@@ -168,12 +156,11 @@ def show_ids(message):
         bot.send_message(chat_id, "⚠️ No emails yet!\nUse /generate first.")
         return
     emails = user_data[chat_id]["emails"]
-    text = "📋 *here are the list of fake mail ids you have*\n\n"
+    text = "📋 here are the list of fake mail ids you have\n\n"
     for i, entry in enumerate(emails, 1):
-        text += f"{i}. `{entry['email']}` | /delete\\_{entry['id']}\n"
-    bot.send_message(chat_id, text, parse_mode="MarkdownV2")
+        text += f"{i}. {entry['email']} | /delete_{entry['id']}\n"
+    bot.send_message(chat_id, text)
 
-# ===== /generate =====
 @bot.message_handler(commands=['generate'])
 def generate(message):
     chat_id = message.chat.id
@@ -187,16 +174,16 @@ def generate(message):
         user_data[chat_id]["emails"].append({"id": email_id, "email": email, "token": token})
         save_data(user_data)
         text = (
-            f"✅ *Your new email:*\n\n"
-            f"`{email}`\n\n_(tap to copy)_\n\n"
+            f"✅ Your new email:\n\n"
+            f"{email}\n\n"
+            f"(tap to copy)\n\n"
             f"⚡ New emails will appear here automatically!\n"
             f"📋 Use /id to see all your emails"
         )
-        bot.send_message(chat_id, text, parse_mode="Markdown")
+        bot.send_message(chat_id, text)
     else:
         bot.send_message(chat_id, "❌ Failed. Try again!")
 
-# ===== /set =====
 @bot.message_handler(commands=['set'])
 def set_custom(message):
     chat_id = message.chat.id
@@ -208,23 +195,23 @@ def set_custom(message):
     username = parts[1].lower().strip()[:10]
     custom_domains = user_data[chat_id].get("custom_domains", [])
     domain = random.choice(custom_domains) if custom_domains else None
-    bot.send_message(chat_id, f"⏳ Setting up `{username}`...", parse_mode="Markdown")
+    bot.send_message(chat_id, f"⏳ Setting up {username}...")
     email, token = set_email(username, domain)
     if email and token:
         email_id = str(int(time.time()))
         user_data[chat_id]["emails"].append({"id": email_id, "email": email, "token": token})
         save_data(user_data)
         text = (
-            f"✅ *Your email:*\n\n"
-            f"`{email}`\n\n_(tap to copy)_\n\n"
+            f"✅ Your email:\n\n"
+            f"{email}\n\n"
+            f"(tap to copy)\n\n"
             f"⚡ New emails will appear here automatically!\n"
             f"📋 Use /id to see all your emails"
         )
-        bot.send_message(chat_id, text, parse_mode="Markdown")
+        bot.send_message(chat_id, text)
     else:
         bot.send_message(chat_id, "❌ Failed. Try another name!")
 
-# ===== /delete =====
 @bot.message_handler(func=lambda m: m.text and m.text.startswith('/delete_'))
 def delete_email(message):
     chat_id = message.chat.id
@@ -241,63 +228,40 @@ def delete_email(message):
     save_data(user_data)
     bot.send_message(chat_id, "🗑️ Email deleted successfully!")
 
-# ===== /phone =====
 @bot.message_handler(commands=['phone'])
 def phone(message):
     chat_id = message.chat.id
     init_user(chat_id)
     parts = message.text.split()
     current = user_data[chat_id].get("phone")
-
     if len(parts) < 2:
         if current:
-            bot.send_message(chat_id,
-                f"📱 *Your recovery phone:*\n`{current}`\n\n"
-                "To update: /phone +201234567890\n"
-                "To remove: /phone remove",
-                parse_mode="Markdown")
+            bot.send_message(chat_id, f"📱 Your recovery phone:\n{current}\n\nTo update: /phone +201234567890\nTo remove: /phone remove")
         else:
-            bot.send_message(chat_id,
-                "📱 *No phone number set.*\n\n"
-                "To add: /phone +201234567890",
-                parse_mode="Markdown")
+            bot.send_message(chat_id, "📱 No phone number set.\n\nTo add: /phone +201234567890")
         return
-
     if parts[1].lower() == "remove":
         user_data[chat_id]["phone"] = None
         save_data(user_data)
         bot.send_message(chat_id, "✅ Phone number removed.")
         return
-
-    phone_num = parts[1]
-    user_data[chat_id]["phone"] = phone_num
+    user_data[chat_id]["phone"] = parts[1]
     save_data(user_data)
-    bot.send_message(chat_id, f"✅ Phone number saved: `{phone_num}`", parse_mode="Markdown")
+    bot.send_message(chat_id, f"✅ Phone number saved: {parts[1]}")
 
-# ===== /domain =====
 @bot.message_handler(commands=['domain'])
 def domain_cmd(message):
     chat_id = message.chat.id
     init_user(chat_id)
     parts = message.text.split()
     custom_domains = user_data[chat_id].get("custom_domains", [])
-
     if len(parts) < 2:
         if custom_domains:
-            d_list = "\n".join([f"{i+1}. `{d}` | /removedomain_{d}" for i, d in enumerate(custom_domains)])
-            bot.send_message(chat_id,
-                f"🌐 *Your custom domains:*\n\n{d_list}\n\n"
-                "To add: /domain add yourdomain.com\n"
-                "To clear all: /domain clear",
-                parse_mode="Markdown")
+            d_list = "\n".join([f"{i+1}. {d} | /removedomain_{d}" for i, d in enumerate(custom_domains)])
+            bot.send_message(chat_id, f"🌐 Your custom domains:\n\n{d_list}\n\nTo add: /domain add yourdomain.com\nTo clear all: /domain clear")
         else:
-            bot.send_message(chat_id,
-                "🌐 *No custom domains set.*\n\n"
-                "To add a domain: /domain add yourdomain.com\n\n"
-                "⚠️ Note: The domain must be supported by mail.tm",
-                parse_mode="Markdown")
+            bot.send_message(chat_id, "🌐 No custom domains set.\n\nTo add: /domain add yourdomain.com")
         return
-
     if parts[1].lower() == "add" and len(parts) >= 3:
         new_domain = parts[2].lower().strip()
         if new_domain in custom_domains:
@@ -305,8 +269,7 @@ def domain_cmd(message):
             return
         user_data[chat_id]["custom_domains"].append(new_domain)
         save_data(user_data)
-        bot.send_message(chat_id, f"✅ Domain added: `{new_domain}`\nNew emails will use this domain.", parse_mode="Markdown")
-
+        bot.send_message(chat_id, f"✅ Domain added: {new_domain}")
     elif parts[1].lower() == "clear":
         user_data[chat_id]["custom_domains"] = []
         save_data(user_data)
@@ -325,47 +288,35 @@ def remove_domain(message):
         domains.remove(domain_to_remove)
         user_data[chat_id]["custom_domains"] = domains
         save_data(user_data)
-        bot.send_message(chat_id, f"✅ Domain `{domain_to_remove}` removed.", parse_mode="Markdown")
+        bot.send_message(chat_id, f"✅ Domain {domain_to_remove} removed.")
     else:
         bot.send_message(chat_id, "⚠️ Domain not found.")
 
-# ===== /block =====
 @bot.message_handler(commands=['block'])
 def block_cmd(message):
     chat_id = message.chat.id
     init_user(chat_id)
     parts = message.text.split()
     blocklist = user_data[chat_id].get("blocklist", [])
-
     if len(parts) < 2:
         if blocklist:
-            b_list = "\n".join([f"{i+1}. `{b}` | /unblock_{b}" for i, b in enumerate(blocklist)])
-            bot.send_message(chat_id,
-                f"🚫 *Your blocklist:*\n\n{b_list}\n\n"
-                "To add: /block sender@example.com\n"
-                "To clear all: /block clear",
-                parse_mode="Markdown")
+            b_list = "\n".join([f"{i+1}. {b} | /unblock_{b}" for i, b in enumerate(blocklist)])
+            bot.send_message(chat_id, f"🚫 Your blocklist:\n\n{b_list}\n\nTo add: /block sender@example.com\nTo clear: /block clear")
         else:
-            bot.send_message(chat_id,
-                "🚫 *Blocklist is empty.*\n\n"
-                "To block a sender: /block sender@example.com\n"
-                "Or block a domain: /block @spam.com",
-                parse_mode="Markdown")
+            bot.send_message(chat_id, "🚫 Blocklist is empty.\n\nTo block a sender: /block sender@example.com\nOr block a domain: /block @spam.com")
         return
-
     if parts[1].lower() == "clear":
         user_data[chat_id]["blocklist"] = []
         save_data(user_data)
         bot.send_message(chat_id, "✅ Blocklist cleared.")
         return
-
     to_block = parts[1].lower().strip()
     if to_block in blocklist:
         bot.send_message(chat_id, "⚠️ Already in blocklist.")
         return
     user_data[chat_id]["blocklist"].append(to_block)
     save_data(user_data)
-    bot.send_message(chat_id, f"✅ Blocked: `{to_block}`\nEmails from this sender will be ignored.", parse_mode="Markdown")
+    bot.send_message(chat_id, f"✅ Blocked: {to_block}")
 
 @bot.message_handler(func=lambda m: m.text and m.text.startswith('/unblock_'))
 def unblock(message):
@@ -378,11 +329,10 @@ def unblock(message):
         blocklist.remove(to_unblock)
         user_data[chat_id]["blocklist"] = blocklist
         save_data(user_data)
-        bot.send_message(chat_id, f"✅ Unblocked: `{to_unblock}`", parse_mode="Markdown")
+        bot.send_message(chat_id, f"✅ Unblocked: {to_unblock}")
     else:
         bot.send_message(chat_id, "⚠️ Not found in blocklist.")
 
-# ===== Webhook =====
 @app.route('/' + TOKEN, methods=['POST'])
 def webhook():
     json_str = request.get_data(as_text=True)
@@ -396,10 +346,8 @@ def index():
 
 if __name__ == "__main__":
     fetch_domains()
-
     email_thread = threading.Thread(target=check_new_emails, daemon=True)
     email_thread.start()
-
     if WEBHOOK_URL:
         bot.remove_webhook()
         time.sleep(1)
