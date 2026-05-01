@@ -192,6 +192,40 @@ def get_mailtm_message(token, msg_id):
     except:
         return None
 
+def extract_body(msg_detail):
+    """استخراج محتوى الإيميل بشكل صح سواء نص أو HTML"""
+    # جرب النص الأول
+    body = msg_detail.get('text', '') or ''
+    body = body.strip()
+    
+    # لو مفيش نص جرب HTML
+    if not body:
+        html = msg_detail.get('html', '') or ''
+        if html:
+            # استخرج الروابط المهمة زي OTP
+            links = re.findall(r'https?://[^\s"\'<>]+', html)
+            # استخرج الأرقام اللي ممكن تكون OTP
+            codes = re.findall(r'\b\d{4,8}\b', html)
+            # نظف الـ HTML
+            body = re.sub(r'<style[^>]*>.*?</style>', '', html, flags=re.DOTALL)
+            body = re.sub(r'<script[^>]*>.*?</script>', '', body, flags=re.DOTALL)
+            body = re.sub(r'<[^>]+>', ' ', body)
+            body = re.sub(r'\s+', ' ', body).strip()
+            # أضف الروابط المهمة في الآخر
+            if links:
+                body += '\n\n🔗 Links:\n' + '\n'.join(links[:3])
+            if codes:
+                body += '\n\n🔢 Codes found: ' + ', '.join(set(codes[:5]))
+    
+    if not body:
+        body = 'No content'
+    
+    # قصر على 2000 حرف
+    if len(body) > 2000:
+        body = body[:2000] + '...'
+    
+    return body
+
 def send_long_message(chat_id, text):
     max_len = 4000
     for i in range(0, len(text), max_len):
@@ -250,10 +284,7 @@ def check_new_emails():
                                 seen_messages[key].add(msg_id)
                                 msg_detail = get_mailtm_message(token, msg_id)
                                 if msg_detail:
-                                    body = msg_detail.get('text', '') or ''
-                                    if not body:
-                                        body = re.sub(r'<[^>]+>', '', msg_detail.get('html', '') or '')
-                                    body = body.strip()[:1000] or 'No content'
+                                    body = extract_body(msg_detail)
                                     subject = msg.get('subject', 'No subject')
                                     notif = t(chat_id, "new_mail_notif",
                                               to=email, from_=sender,
