@@ -14,15 +14,32 @@ bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
 user_data = {}
-seen_messages = {}  # لتتبع الرسايل اللي اتبعتت
+seen_messages = {}
+available_domains = []
 
-DOMAINS = ["hi2.in", "nut.cc", "got.sh", "lol.ovh"]
+def fetch_domains():
+    """جلب الدومينات المتاحة من mail.tm"""
+    global available_domains
+    try:
+        res = requests.get("https://api.mail.tm/domains", timeout=10)
+        domains = res.json().get("hydra:member", [])
+        available_domains = [d["domain"] for d in domains]
+        print(f"Available domains: {available_domains}")
+    except Exception as e:
+        print(f"Error fetching domains: {e}")
+        available_domains = []
 
 def create_account(username):
     try:
-        domain = random.choice(DOMAINS)
+        if not available_domains:
+            fetch_domains()
+        if not available_domains:
+            return None, None
+        
+        domain = random.choice(available_domains)
         email = f"{username}@{domain}"
         password = ''.join(random.choices(string.ascii_letters + string.digits, k=12))
+        
         res = requests.post("https://api.mail.tm/accounts",
                           json={"address": email, "password": password}, timeout=10)
         if res.status_code == 201:
@@ -30,28 +47,29 @@ def create_account(username):
                                json={"address": email, "password": password}, timeout=10)
             token = res2.json().get("token")
             return email, token
-        else:
-            for d in DOMAINS:
-                if d != domain:
-                    email = f"{username}@{d}"
-                    res = requests.post("https://api.mail.tm/accounts",
-                                      json={"address": email, "password": password}, timeout=10)
-                    if res.status_code == 201:
-                        res2 = requests.post("https://api.mail.tm/token",
-                                           json={"address": email, "password": password}, timeout=10)
-                        token = res2.json().get("token")
-                        return email, token
+        
+        # جرب دومينات تانية
+        for d in available_domains:
+            if d != domain:
+                email = f"{username}@{d}"
+                res = requests.post("https://api.mail.tm/accounts",
+                                  json={"address": email, "password": password}, timeout=10)
+                if res.status_code == 201:
+                    res2 = requests.post("https://api.mail.tm/token",
+                                       json={"address": email, "password": password}, timeout=10)
+                    token = res2.json().get("token")
+                    return email, token
         return None, None
     except Exception as e:
         print(f"Error: {e}")
         return None, None
 
 def generate_email():
-    username = ''.join(random.choices(string.ascii_lowercase, k=5))
+    username = ''.join(random.choices(string.ascii_lowercase, k=6))
     return create_account(username)
 
 def set_email(username):
-    return create_account(username[:8].lower())
+    return create_account(username[:10].lower())
 
 def get_inbox(token):
     try:
@@ -91,14 +109,15 @@ def check_new_emails():
                             if body:
                                 body = body[:500]
                             text = (
-                                f"📩 *New Email on* `{email}`\n\n"
+                                f"📩 *New Email!*\n\n"
+                                f"📬 *To:* `{email}`\n"
                                 f"👤 *From:* {msg.get('from', {}).get('address', 'Unknown')}\n"
                                 f"📌 *Subject:* {msg.get('subject', 'No subject')}\n\n"
                                 f"💬 *Message:*\n{body}"
                             )
                             bot.send_message(chat_id, text, parse_mode="Markdown")
             except Exception as e:
-                print(f"Error checking emails: {e}")
+                print(f"Error checking emails for {chat_id}: {e}")
         time.sleep(10)
 
 @bot.message_handler(commands=['start'])
@@ -151,7 +170,7 @@ def set_custom(message):
     if len(parts) < 2:
         bot.send_message(chat_id, "⚠️ Usage: /set yourname\nExample: /set shadow")
         return
-    username = parts[1].lower().strip()[:8]
+    username = parts[1].lower().strip()[:10]
     bot.send_message(chat_id, f"⏳ Setting up `{username}`...", parse_mode="Markdown")
     email, token = set_email(username)
     if email and token:
@@ -179,7 +198,8 @@ def index():
     return 'ShadowMail Bot is running!', 200
 
 if __name__ == "__main__":
-    # تشغيل thread لفحص الرسايل
+    fetch_domains()
+    
     email_thread = threading.Thread(target=check_new_emails, daemon=True)
     email_thread.start()
 
