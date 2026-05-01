@@ -4,6 +4,7 @@ import random
 import string
 import time
 import os
+import threading
 from flask import Flask, request
 
 TOKEN = os.environ.get("TOKEN", "8445270867:AAF6H50J64se-KW3z00sa8DYsQlPoiMJmj0")
@@ -13,53 +14,92 @@ bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
 user_data = {}
+seen_messages = {}  # لتتبع الرسايل اللي اتبعتت
 
-# دومينات قصيرة
-SHORT_DOMAINS = ["hi2.in", "nut.cc", "uk2.net", "got.sh"]
+DOMAINS = ["hi2.in", "nut.cc", "got.sh", "lol.ovh"]
+
+def create_account(username):
+    try:
+        domain = random.choice(DOMAINS)
+        email = f"{username}@{domain}"
+        password = ''.join(random.choices(string.ascii_letters + string.digits, k=12))
+        res = requests.post("https://api.mail.tm/accounts",
+                          json={"address": email, "password": password}, timeout=10)
+        if res.status_code == 201:
+            res2 = requests.post("https://api.mail.tm/token",
+                               json={"address": email, "password": password}, timeout=10)
+            token = res2.json().get("token")
+            return email, token
+        else:
+            for d in DOMAINS:
+                if d != domain:
+                    email = f"{username}@{d}"
+                    res = requests.post("https://api.mail.tm/accounts",
+                                      json={"address": email, "password": password}, timeout=10)
+                    if res.status_code == 201:
+                        res2 = requests.post("https://api.mail.tm/token",
+                                           json={"address": email, "password": password}, timeout=10)
+                        token = res2.json().get("token")
+                        return email, token
+        return None, None
+    except Exception as e:
+        print(f"Error: {e}")
+        return None, None
 
 def generate_email():
-    """توليد إيميل قصير"""
-    try:
-        username = ''.join(random.choices(string.ascii_lowercase, k=5))
-        domain = random.choice(SHORT_DOMAINS)
-        email = f"{username}@{domain}"
-        res = requests.get(f"https://www.guerrillamail.com/ajax.php?f=set_email_user&email_user={username}&lang=en&sid=", timeout=10)
-        data = res.json()
-        sid = data.get("sid_token", "")
-        real_email = data.get("email_addr", email)
-        return real_email, sid
-    except Exception as e:
-        print(f"Error: {e}")
-        return None, None
+    username = ''.join(random.choices(string.ascii_lowercase, k=5))
+    return create_account(username)
 
 def set_email(username):
-    """تعيين إيميل مخصص قصير"""
-    try:
-        username = username[:8]  # 8 أحرف بس
-        res = requests.get(f"https://www.guerrillamail.com/ajax.php?f=set_email_user&email_user={username}&lang=en&sid=", timeout=10)
-        data = res.json()
-        email = data.get("email_addr", "")
-        sid = data.get("sid_token", "")
-        if email:
-            return email, sid
-        return None, None
-    except Exception as e:
-        print(f"Error: {e}")
-        return None, None
+    return create_account(username[:8].lower())
 
-def get_inbox(sid):
+def get_inbox(token):
     try:
-        res = requests.get(f"https://www.guerrillamail.com/ajax.php?f=get_email_list&offset=0&sid_token={sid}", timeout=10)
-        return res.json().get("list", [])
+        res = requests.get("https://api.mail.tm/messages",
+                          headers={"Authorization": f"Bearer {token}"}, timeout=10)
+        return res.json().get("hydra:member", [])
     except:
         return []
 
-def get_message(sid, msg_id):
+def get_message(token, msg_id):
     try:
-        res = requests.get(f"https://www.guerrillamail.com/ajax.php?f=fetch_email&email_id={msg_id}&sid_token={sid}", timeout=10)
+        res = requests.get(f"https://api.mail.tm/messages/{msg_id}",
+                          headers={"Authorization": f"Bearer {token}"}, timeout=10)
         return res.json()
     except:
         return None
+
+def check_new_emails():
+    """فحص الرسايل الجديدة كل 10 ثواني"""
+    while True:
+        for chat_id, data in list(user_data.items()):
+            try:
+                token = data.get("token")
+                email = data.get("email")
+                if not token:
+                    continue
+                messages = get_inbox(token)
+                if chat_id not in seen_messages:
+                    seen_messages[chat_id] = set()
+                for msg in messages:
+                    msg_id = msg.get("id")
+                    if msg_id and msg_id not in seen_messages[chat_id]:
+                        seen_messages[chat_id].add(msg_id)
+                        msg_detail = get_message(token, msg_id)
+                        if msg_detail:
+                            body = msg_detail.get('text', msg_detail.get('html', 'No content'))
+                            if body:
+                                body = body[:500]
+                            text = (
+                                f"📩 *New Email on* `{email}`\n\n"
+                                f"👤 *From:* {msg.get('from', {}).get('address', 'Unknown')}\n"
+                                f"📌 *Subject:* {msg.get('subject', 'No subject')}\n\n"
+                                f"💬 *Message:*\n{body}"
+                            )
+                            bot.send_message(chat_id, text, parse_mode="Markdown")
+            except Exception as e:
+                print(f"Error checking emails: {e}")
+        time.sleep(10)
 
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -68,39 +108,37 @@ def start(message):
         "👤 *Welcome to ShadowMail!*\n\n"
         "🌑 Your anonymous email assistant\n\n"
         "📋 *Commands:*\n"
-        "📬 /generate — Random short email\n"
+        "📬 /generate — Random email\n"
         "✏️ /set name — Custom email\n"
-        "📥 /inbox — Check inbox\n"
-        "🔄 /refresh — New email\n\n"
+        "🔄 /refresh — New email\n"
+        "📧 /myemail — Show current email\n\n"
+        "⚡ Emails arrive automatically in chat!\n\n"
         "🚀 Try /generate now!"
     )
     bot.send_message(chat_id, text, parse_mode="Markdown")
 
-@bot.message_handler(commands=['help'])
-def help_cmd(message):
+@bot.message_handler(commands=['myemail'])
+def myemail(message):
     chat_id = message.chat.id
-    text = (
-        "📋 *Commands:*\n\n"
-        "📬 /generate — Random email\n"
-        "✏️ /set name — Custom email\n"
-        "📥 /inbox — Check inbox\n"
-        "🔄 /refresh — New email"
-    )
-    bot.send_message(chat_id, text, parse_mode="Markdown")
+    if chat_id not in user_data:
+        bot.send_message(chat_id, "⚠️ No email yet!\nUse /generate first.")
+        return
+    email = user_data[chat_id]["email"]
+    bot.send_message(chat_id, f"📬 *Your email:*\n\n`{email}`\n\n_(tap to copy)_", parse_mode="Markdown")
 
 @bot.message_handler(commands=['generate', 'refresh'])
 def generate(message):
     chat_id = message.chat.id
     bot.send_message(chat_id, "⏳ Generating...")
-    email, sid = generate_email()
-    if email and sid:
-        user_data[chat_id] = {"email": email, "sid": sid}
+    email, token = generate_email()
+    if email and token:
+        user_data[chat_id] = {"email": email, "token": token}
+        seen_messages[chat_id] = set()
         text = (
             f"✅ *Your email:*\n\n"
             f"`{email}`\n\n"
             f"_(tap to copy)_\n\n"
-            f"📥 /inbox — Check messages\n"
-            f"✏️ /set name — Custom email"
+            f"⚡ New emails will appear here automatically!"
         )
         bot.send_message(chat_id, text, parse_mode="Markdown")
     else:
@@ -115,44 +153,19 @@ def set_custom(message):
         return
     username = parts[1].lower().strip()[:8]
     bot.send_message(chat_id, f"⏳ Setting up `{username}`...", parse_mode="Markdown")
-    email, sid = set_email(username)
-    if email and sid:
-        user_data[chat_id] = {"email": email, "sid": sid}
+    email, token = set_email(username)
+    if email and token:
+        user_data[chat_id] = {"email": email, "token": token}
+        seen_messages[chat_id] = set()
         text = (
             f"✅ *Your email:*\n\n"
             f"`{email}`\n\n"
             f"_(tap to copy)_\n\n"
-            f"📥 /inbox — Check messages"
+            f"⚡ New emails will appear here automatically!"
         )
         bot.send_message(chat_id, text, parse_mode="Markdown")
     else:
         bot.send_message(chat_id, "❌ Failed. Try another name!")
-
-@bot.message_handler(commands=['inbox'])
-def inbox(message):
-    chat_id = message.chat.id
-    if chat_id not in user_data:
-        bot.send_message(chat_id, "⚠️ No email yet!\nUse /generate first.")
-        return
-    email = user_data[chat_id]["email"]
-    sid = user_data[chat_id]["sid"]
-    bot.send_message(chat_id, f"📥 Checking:\n`{email}`", parse_mode="Markdown")
-    messages = get_inbox(sid)
-    if not messages:
-        bot.send_message(chat_id, "📭 Inbox is empty!")
-        return
-    bot.send_message(chat_id, f"📬 *{len(messages)} message(s):*", parse_mode="Markdown")
-    for msg in messages[:5]:
-        msg_detail = get_message(sid, msg.get('mail_id'))
-        if msg_detail:
-            body = msg_detail.get('mail_body', 'No content')[:500]
-            text = (
-                f"📩 *From:* {msg.get('mail_from', 'Unknown')}\n"
-                f"📌 *Subject:* {msg.get('mail_subject', 'No subject')}\n\n"
-                f"💬 {body}"
-            )
-            bot.send_message(chat_id, text, parse_mode="Markdown")
-            time.sleep(0.5)
 
 @app.route('/' + TOKEN, methods=['POST'])
 def webhook():
@@ -166,6 +179,10 @@ def index():
     return 'ShadowMail Bot is running!', 200
 
 if __name__ == "__main__":
+    # تشغيل thread لفحص الرسايل
+    email_thread = threading.Thread(target=check_new_emails, daemon=True)
+    email_thread.start()
+
     if WEBHOOK_URL:
         bot.remove_webhook()
         time.sleep(1)
